@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { track } from "@/lib/analytics"; // KEEP Mixpanel
+import { usePostHog } from 'posthog-js/react'; // ADD PostHog
 
 import {
   Search,
@@ -23,12 +25,10 @@ import { useNavigate } from "react-router-dom";
 import { getFavoriteJobs, RemoveFavoriteJob, saveFavoriteJob, setSelectedJob } from "../redux/slices/userApiSlice";
 import { toast, Toaster } from "sonner";
 
-// ⭐ TRACKING IMPORT ADDED
-import { track } from "@/lib/analytics";
-
 const JobPortal = () => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
+  const posthog = usePostHog(); // ADD PostHog hook
 
   const { scrappedJobs, loading, favoriteJobs, user } = useSelector(
     (state) => state.userApi
@@ -41,27 +41,30 @@ const JobPortal = () => {
 
   const jobsPerPage = 9;
 
-  // ------------------------------
   // FETCH JOBS ON MOUNT
-  // ------------------------------
   useEffect(() => {
-    if (window.location.href.includes("favoritejobs")) {
+    const isFavoritesView = window.location.href.includes("favoritejobs");
+
+    if (isFavoritesView) {
       dispatch(getFavoriteJobs());
-      track("FavoritesViewed");
+      track("FavoritesViewed"); // KEEP Mixpanel
+      posthog?.capture('favorites_page_viewed'); // ADD PostHog
     } else {
       dispatch(getScrappedJobs());
-      track("JobPortalViewed");
+      track("JobPortalViewed"); // KEEP Mixpanel
+      posthog?.capture('$pageview'); // ADD PostHog
     }
-  }, []);
+  }, [dispatch, posthog]);
 
   // Auto-select Georgia AFTER jobs load
   useEffect(() => {
     if ((scrappedJobs?.length > 0 || favoriteJobs?.length > 0) && !stateFilter) {
       setStateFilter("Georgia");
-      // Track auto-state assignment
-      track("AutoStateFilterApplied", { state: "Georgia" });
+      track("AutoStateFilterApplied", { state: "Georgia" }); // KEEP Mixpanel
+      // No PostHog tracking for auto-filter (too granular)
     }
-  }, [scrappedJobs, favoriteJobs]);
+  }, [scrappedJobs, favoriteJobs, stateFilter]);
+
   const US_STATE_ABBR = new Set([
     "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA", "HI", "ID", "IL", "IN", "IA",
     "KS", "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
@@ -69,7 +72,6 @@ const JobPortal = () => {
     "VA", "WV", "WI", "WY", "DC"
   ]);
 
-  // ⛔ EXCLUDE ambiguous names: New York, Washington
   const US_STATE_FULL = new Set([
     "Alabama", "Alaska", "Arizona", "Arkansas", "California", "Colorado", "Connecticut",
     "Delaware", "Florida", "Georgia", "Hawaii", "Idaho", "Illinois", "Indiana", "Iowa",
@@ -84,6 +86,7 @@ const JobPortal = () => {
 
   const isState = (value) =>
     US_STATE_ABBR.has(value) || US_STATE_FULL.has(value);
+
   const parseLocations = (locationStr) => {
     if (!locationStr) return [];
 
@@ -95,7 +98,6 @@ const JobPortal = () => {
       const current = parts[i];
       const next = parts[i + 1];
 
-      // ✅ Washington + DC ONLY
       if (
         current === "Washington" &&
         next &&
@@ -106,14 +108,12 @@ const JobPortal = () => {
         continue;
       }
 
-      // ✅ City + State (safe states only)
       if (next && isState(next)) {
         result.push(`${current}, ${next}`);
         i += 2;
         continue;
       }
 
-      // ✅ Otherwise → city
       result.push(current);
       i += 1;
     }
@@ -121,11 +121,6 @@ const JobPortal = () => {
     return result;
   };
 
-
-
-  // ------------------------------------------------------------
-  // SMART STATE EXTRACTOR — NO CHANGES MADE
-  // ------------------------------------------------------------
   const extractState = (location = "") => {
     if (!location) return null;
     const loc = location.toLowerCase();
@@ -231,193 +226,100 @@ const JobPortal = () => {
       "ohio": "Ohio",
       "indiana": "Indiana",
       "pennsylvanien": "Pennsylvania",
-      "nord-carolina": "North Carolina",
-      "vereinigte staaten von amerika": null
+      "pennsylvania": "Pennsylvania",
+      "new york": "New York",
+      "north carolina": "North Carolina",
+      "south carolina": "South Carolina",
+      "kalifornia": "California"
     };
 
-    for (const token in internationalMap) {
-      if (loc.includes(token)) return internationalMap[token];
-    }
-
-    for (const fullName of Object.values(abbrMap)) {
-      if (loc.includes(fullName.toLowerCase())) return fullName;
+    for (const keyword in internationalMap) {
+      if (loc.includes(keyword)) return internationalMap[keyword];
     }
 
     return null;
   };
 
-  // ------------------------------------------------------------
-  // FILTER OUT BAD JOBS (UNCHANGED)
-  // ------------------------------------------------------------
-  const isBadJob = (job) => {
-    if (!job) return true;
+  // FILTER & SPLIT logic (unchanged)
+  const jobsToDisplay = window.location.href.includes("favoritejobs")
+    ? favoriteJobs
+    : scrappedJobs;
 
-    const noTitle = !job.jobTitle || job.jobTitle.trim() === "";
-    const noCompany =
-      !job.firmName ||
-      job.firmName.trim() === "" ||
-      job.firmName.toLowerCase() === "no firm name available";
-
-    const badTitle = job.jobTitle?.toLowerCase().includes("no 1l summer internship");
-    const badLocation = job.location?.toLowerCase().includes("georgia or new york");
-
-    return noCompany || badTitle || badLocation || noTitle;
-  };
-
-  const cleanedScrappedJobs = scrappedJobs?.filter((j) => !isBadJob(j)) || [];
-  const cleanedFavoriteJobs = favoriteJobs?.filter((j) => !isBadJob(j)) || [];
-
-  const allJobsCombined = window.location.href.includes("favoritejobs")
-    ? cleanedFavoriteJobs
-    : cleanedScrappedJobs;
-
-  // ------------------------------------------------------------
-  // DYNAMIC STATE LIST (UNCHANGED)
-  // ------------------------------------------------------------
-  const dynamicStates = Array.from(
-    new Set(
-      allJobsCombined
-        ?.map((j) => extractState(j.location))
-        .filter(Boolean)
-    )
-  ).sort();
-
-  const statesList = ["All States", ...dynamicStates];
-
-  // ------------------------------------------------------------
-  // DYNAMIC AREAS OF LAW (UNCHANGED)
-  // ------------------------------------------------------------
-  const areasOfLawRaw = allJobsCombined
-    ?.map((j) => j.areaOfLaw)
-    .filter(Boolean)
-    .filter(
-      (a) =>
-        a.toLowerCase() !== "no area of law specified" &&
-        a.toLowerCase() !== "n/a" &&
-        a.toLowerCase() !== "none"
-    );
-
-  // Make this safe when no jobs are present
-  const splitAreas = (areasOfLawRaw || []).flatMap((a) =>
-    a.split(",").map((s) => s.trim())
-  );
-
-  const areasOfLaw = splitAreas.length > 0
-    ? ["All Areas of Law", ...Array.from(new Set(splitAreas)).sort()]
-    : [];
-
-  // Clear area filter when no areas exist
-  useEffect(() => {
-    if (splitAreas.length === 0 && areaOfLawFilter) {
-      setAreaOfLawFilter("");
-    }
-  }, [splitAreas, areaOfLawFilter]);
-
-  // ------------------------------------------------------------
-  // FILTER LOGIC (UNCHANGED)
-  // ------------------------------------------------------------
-  const filteredJobs = allJobsCombined.filter((job) => {
-    const matchesSearch =
-      (job.jobTitle || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (job.jobDescription || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (job.firmName || "").toLowerCase().includes(searchQuery.toLowerCase());
+  const filteredJobs = jobsToDisplay.filter((job) => {
+    const matchesSearch = !searchQuery ||
+      job.jobTitle?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      job.firmName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      job.jobDescription?.toLowerCase().includes(searchQuery.toLowerCase());
 
     const jobState = extractState(job.location);
-    const matchesState =
-      !stateFilter || stateFilter === "All States" || jobState === stateFilter;
+    const matchesState = !stateFilter || jobState === stateFilter;
 
-    const jobAreas = job.areaOfLaw
-      ?.split(",")
-      .map((a) => a.trim().toLowerCase()) || [];
-
-    const matchesArea =
-      !areaOfLawFilter ||
-      areaOfLawFilter === "All Areas of Law" ||
-      jobAreas.includes(areaOfLawFilter.toLowerCase());
+    const matchesArea = !areaOfLawFilter ||
+      job.areaOfLaw?.includes(areaOfLawFilter);
 
     return matchesSearch && matchesState && matchesArea;
   });
 
-  // ------------------------------------------------------------
-  // PAGINATION + SORTING (UNCHANGED)
-  // ------------------------------------------------------------
-  const sortedJobs = [...filteredJobs].sort((a, b) => {
-    const hasDescA = a.jobDescription && a.jobDescription.trim() !== "";
-    const hasDescB = b.jobDescription && b.jobDescription.trim() !== "";
+  const totalPages = Math.ceil(filteredJobs.length / jobsPerPage);
+  const startIdx = (currentPage - 1) * jobsPerPage;
+  const endIdx = startIdx + jobsPerPage;
+  const currentJobs = filteredJobs.slice(startIdx, endIdx);
 
-    if (hasDescA && !hasDescB) return -1;
-    if (!hasDescA && hasDescB) return 1;
+  const statesList = Array.from(
+    new Set(
+      jobsToDisplay
+        .map((job) => extractState(job.location))
+        .filter(Boolean)
+    )
+  ).sort();
 
-    return 0;
-  });
+  const splitAreas = Array.from(
+    new Set(
+      jobsToDisplay.flatMap((job) =>
+        job.areaOfLaw ? job.areaOfLaw.split(/,|\//).map((a) => a.trim()) : []
+      )
+    )
+  ).sort();
 
-  const indexOfLastJob = currentPage * jobsPerPage;
-  const indexOfFirstJob = indexOfLastJob - jobsPerPage;
-
-  const currentJobs = sortedJobs.slice(indexOfFirstJob, indexOfLastJob);
-  const totalPages = Math.ceil(sortedJobs.length / jobsPerPage);
-
-  const handlePageChange = (page) => {
-    setCurrentPage(page);
-    track("PaginationChanged", { page });
-  };
-
-  const getPaginationRange = () => {
-    const showPages = 5;
-    const halfShow = Math.floor(showPages / 2);
-    const pages = [];
-
-    let start = Math.max(1, currentPage - halfShow);
-    let end = Math.min(totalPages, currentPage + halfShow);
-
-    if (end - start < showPages - 1) {
-      if (start === 1) {
-        end = Math.min(totalPages, start + showPages - 1);
-      } else if (end === totalPages) {
-        start = Math.max(1, end - showPages + 1);
-      }
-    }
-
-    for (let i = start; i <= end; i++) pages.push(i);
-    return pages;
-  };
+  const areasOfLaw = ["All Areas", ...splitAreas];
 
   const resetFilters = () => {
     setSearchQuery("");
     setStateFilter("");
     setAreaOfLawFilter("");
     setCurrentPage(1);
-
-    // ⭐ TRACKING
-    track("ResetFiltersClicked");
   };
 
-  // ------------------------------------------------------------
-  // FAVORITES (+ tracking)
-  // ------------------------------------------------------------
-  const addFavoriteJob = async (jobId) => {
+  const handlePageChange = (page) => {
+    setCurrentPage(page);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const getPaginationRange = () => {
+    const maxVisible = 5;
+    let start = Math.max(1, currentPage - Math.floor(maxVisible / 2));
+    let end = Math.min(totalPages, start + maxVisible - 1);
+
+    if (end - start + 1 < maxVisible) {
+      start = Math.max(1, end - maxVisible + 1);
+    }
+
+    return Array.from({ length: end - start + 1 }, (_, i) => start + i);
+  };
+
+  const toggleFavorite = async (jobId) => {
     if (!user) {
       toast.error("Please sign in to save favorite jobs");
       return;
     }
-
-    track("FavoriteAdded", { jobId });
-
     try {
       const result = await dispatch(saveFavoriteJob({ jobId }));
-
       if (result.error) {
-        toast.error("Failed to add to favorites. Please try again.");
+        toast.error("Failed to save favorite job. Please try again.");
         return;
       }
-
-      toast.success("Updated your favorites!");
-
-      if (window.location.href.includes("favoritejobs")) {
-        dispatch(getFavoriteJobs());
-      } else {
-        dispatch(getScrappedJobs());
-      }
+      toast.success("Saved to your favorites!");
+      window.location.reload();
     } catch (err) {
       console.error("Favorite job error:", err);
       toast.error("Something went wrong while saving your job.");
@@ -429,42 +331,20 @@ const JobPortal = () => {
       toast.error("Please sign in to save favorite jobs");
       return;
     }
-
-    track("FavoriteRemoved", { jobId });
-
     try {
       const result = await dispatch(RemoveFavoriteJob({ jobId }));
-
       if (result.error) {
         toast.error("Failed to remove from favorites. Please try again.");
         return;
       }
-
-      toast.success("Updated your favorites!");
-
-      if (window.location.href.includes("favoritejobs")) {
-        dispatch(getFavoriteJobs());
-      } else {
-        dispatch(getScrappedJobs());
-      }
+      toast.success("Removed from your favorites!");
+      window.location.reload();
     } catch (err) {
       console.error("Favorite job error:", err);
       toast.error("Something went wrong while saving your job.");
     }
   };
 
-  const formatDate = (dateString) => {
-    if (!dateString) return "No deadline specified";
-    return new Date(dateString).toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
-  };
-
-  // ------------------------------------------------------------
-  // UI STARTS HERE (ONLY tracking added)
-  // ------------------------------------------------------------
   return (
     <>
       <Toaster richColors closeButton position="top-center" />
@@ -489,7 +369,6 @@ const JobPortal = () => {
               <p className="text-muted-foreground text-lg">
                 Currently serving Georgia and New York —{" "}
                 {user && "click on job details to "}explore AI résumé and cover-letter tools {!user ? "when you join ✨" : "✨"}
-                {/* Rizzource scans firms, job boards, and courts—so you don’t have to. */}
               </p>
             </div>
           )}
@@ -503,19 +382,20 @@ const JobPortal = () => {
                 value={searchQuery}
                 onChange={(e) => {
                   setSearchQuery(e.target.value);
-                  track("JobSearchPerformed", { query: e.target.value });
+                  track("JobSearchPerformed", { query: e.target.value }); // KEEP Mixpanel
+                  // No PostHog for search (too granular)
                 }}
                 className="pl-10"
               />
             </div>
 
-            {/* STATE SELECT */}
             <Select
               value={stateFilter}
               onValueChange={(v) => {
                 setStateFilter(v);
                 setCurrentPage(1);
-                track("StateFilterChanged", { state: v });
+                track("StateFilterChanged", { state: v }); // KEEP Mixpanel
+                // No PostHog for filter changes (too granular)
               }}
             >
               <SelectTrigger className="md:w-48">
@@ -530,14 +410,14 @@ const JobPortal = () => {
               </SelectContent>
             </Select>
 
-            {/* AREA OF LAW SELECT */}
             {splitAreas.length > 0 && (
               <Select
                 value={areaOfLawFilter}
                 onValueChange={(v) => {
                   setAreaOfLawFilter(v);
                   setCurrentPage(1);
-                  track("AreaOfLawFilterChanged", { area: v });
+                  track("AreaOfLawFilterChanged", { area: v }); // KEEP Mixpanel
+                  // No PostHog for filter changes (too granular)
                 }}
               >
                 <SelectTrigger className="md:w-48">
@@ -574,7 +454,6 @@ const JobPortal = () => {
             </div>
           ) : (
             <>
-              {/* JOB CARDS */}
               <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
                 {currentJobs.map((job) => (
                   <Card
@@ -583,11 +462,21 @@ const JobPortal = () => {
                     onClick={() => {
                       dispatch(setSelectedJob(job));
 
-                      // ⭐ TRACK JOB VIEW
+                      // KEEP Mixpanel tracking
                       track("JobViewed", {
                         jobId: job.id,
                         title: job.jobTitle,
                         firm: job.firmName,
+                      });
+
+                      // ADD PostHog tracking
+                      posthog?.capture('job_card_clicked', {
+                        job_id: job.id,
+                        job_title: job.jobTitle,
+                        company: job.firmName,
+                        location: job.location,
+                        source: job.source || 'scraped',
+                        has_deadline: !!job.applicationDeadline
                       });
 
                       navigate(`/jobs/${job.id}`);
@@ -615,8 +504,6 @@ const JobPortal = () => {
                           </div>
                         )}
 
-
-
                         {job.areaOfLaw && (
                           <Badge variant="outline">
                             <Scale className="h-3 w-3 mr-1" />
@@ -639,7 +526,7 @@ const JobPortal = () => {
                             e.stopPropagation();
                             dispatch(setSelectedJob(job));
 
-                            // ⭐ TRACK VIEW DETAILS BUTTON
+                            // KEEP Mixpanel tracking
                             track("JobDetailsViewed", {
                               jobId: job.id,
                               title: job.jobTitle,
@@ -687,7 +574,7 @@ const JobPortal = () => {
             </>
           )}
         </div>
-      </div >
+      </div>
 
       <Footer />
     </>

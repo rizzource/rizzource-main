@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { useSelector, useDispatch } from "react-redux";
 import { Heart } from "lucide-react";
 import { saveFavoriteJob, getFavoriteJobs } from "@/redux/slices/userApiSlice";
+import { usePostHog } from 'posthog-js/react'; // ADD PostHog
 
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardContent, CardTitle } from "@/components/ui/card";
@@ -34,6 +35,7 @@ import { RemoveFavoriteJob } from "../redux/slices/userApiSlice";
 const JobDetails = () => {
   const navigate = useNavigate();
   const dispatch = useDispatch();
+  const posthog = usePostHog(); // ADD PostHog
 
   const job = useSelector((state) => state.userApi.selectedJob);
   const user = useSelector((state) => state.userApi.user);
@@ -49,6 +51,21 @@ const JobDetails = () => {
   const [editableText, setEditableText] = useState("");
   const [copied, setCopied] = useState(false);
 
+  // Track job details view on mount (PostHog)
+  useEffect(() => {
+    if (job) {
+      posthog?.capture('job_details_viewed', {
+        job_id: job.id,
+        job_title: job.jobTitle,
+        company: job.firmName,
+        job_type: job.jobType,
+        location: job.location,
+        has_salary: !!job.salary,
+        has_deadline: !!job.applicationDeadline,
+      });
+    }
+  }, [job, posthog]);
+
   useEffect(() => {
     if (!job) navigate("/jobs");
   }, [job, navigate]);
@@ -63,6 +80,7 @@ const JobDetails = () => {
         year: "numeric",
       })
       : "";
+
   // -----------------------------
   // FAVORITE JOB HANDLER
   // -----------------------------
@@ -80,12 +98,20 @@ const JobDetails = () => {
         return;
       }
 
+      // Track favorite action (PostHog)
+      posthog?.capture('job_favorited', {
+        job_id: jobId,
+        job_title: job.jobTitle,
+        company: job.firmName
+      });
+
       toast.success("Updated your favorites");
       window.location.reload();
     } catch (err) {
       toast.error("Could not update favorite job");
     }
   };
+
   const deleteFavoriteJob = async (jobId) => {
     if (!user) {
       toast.error("Please sign in to save favorite jobs");
@@ -99,6 +125,13 @@ const JobDetails = () => {
         return;
       }
 
+      // Track unfavorite action (PostHog)
+      posthog?.capture('job_unfavorited', {
+        job_id: jobId,
+        job_title: job.jobTitle,
+        company: job.firmName
+      });
+
       toast.success("Updated your favorites!");
 
       window.location.reload();
@@ -107,6 +140,7 @@ const JobDetails = () => {
       toast.error("Something went wrong while saving your job.");
     }
   };
+
   // -----------------------------
   // Resume Upload
   // -----------------------------
@@ -133,11 +167,21 @@ const JobDetails = () => {
       return;
     }
 
-    // NEW — Navigate to ResumeEditor with extracted text
+    // Track AI tool click (PostHog)
+    posthog?.capture('ai_tool_clicked', {
+      tool: 'enhance_resume',
+      job_id: job.id,
+      job_title: job.jobTitle,
+      has_resume_uploaded: !!tempResume?.text
+    });
+
+    // Navigate to ResumeEditor with extracted text
     navigate("/resume/editor", {
       state: {
         file: tempResume.file || null,
         extractedText: tempResume.text,
+        source_job_id: job.id,
+        source_job_title: job.jobTitle
       },
     });
   };
@@ -146,25 +190,41 @@ const JobDetails = () => {
   // NEW: Generate Cover Letter
   // -----------------------------
   const handleGenerateCoverLetter = () => {
-    navigate("/cover-letter/generator"
-      , {
-        state: {
-          jobId: job.id,
-          title: job.jobTitle,
-          jobCompany: job.firmName,
-          description: job.jobDescription
-        },
-      }
-    );
+    // Track AI tool click (PostHog)
+    posthog?.capture('ai_tool_clicked', {
+      tool: 'generate_cover_letter',
+      job_id: job.id,
+      job_title: job.jobTitle,
+      company: job.firmName
+    });
+
+    navigate("/cover-letter/generator", {
+      state: {
+        jobId: job.id,
+        title: job.jobTitle,
+        jobCompany: job.firmName,
+        description: job.jobDescription
+      },
+    });
   };
 
   const handleApplyClick = () => {
-    if (job.jobUrl) {
-      window.open(job.jobUrl, "_blank");
+    const targetUrl = job.jobUrl || job.source;
+
+    if (targetUrl) {
+      // Track external website visit (PostHog)
+      posthog?.capture('visit_website_clicked', {
+        job_id: job.id,
+        job_title: job.jobTitle,
+        company: job.firmName,
+        destination_url: targetUrl
+      });
+
+      window.open(targetUrl, "_blank");
       return;
-    } else if (job.source) {
-      window.open(job.source, "_blank");
     }
+
+    // If no external URL, show application form
     // setShowApplicationForm(true);
   };
 

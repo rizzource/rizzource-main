@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { track } from "@/lib/analytics"
+import { usePostHog } from 'posthog-js/react'
 import {
     ArrowLeft,
     Upload,
@@ -46,63 +47,6 @@ import { fileUpload, generateNewBulletThunk, improveBulletThunk } from "../../re
 import { useDispatch } from "react-redux"
 import { buildResumeHtml } from "../../lib/utils"
 import FeedbackModal from "../FeedbackModal"
-
-// File parser mock - in real implementation, use a library like pdf-parse or mammoth
-const parseResumeFile = async (file) => {
-    await new Promise((resolve) => setTimeout(resolve, 2000))
-
-    // Mock parsed data - replace with actual parsing logic
-    return {
-        personalInfo: {
-            name: "John Doe",
-            email: "john.doe@email.com",
-            phone: "(555) 123-4567",
-            location: "San Francisco, CA",
-            linkedin: "linkedin.com/in/johndoe",
-        },
-        summary:
-            "Results-driven professional with 5+ years of experience in software development and project management. Proven track record of delivering high-impact projects and leading cross-functional teams.",
-        experience: [
-            {
-                id: "exp-1",
-                title: "Senior Software Engineer",
-                company: "Tech Company Inc.",
-                location: "San Francisco, CA",
-                startDate: "Jan 2021",
-                endDate: "Present",
-                bullets: [
-                    { id: "b1", text: "Led development of microservices architecture serving 1M+ daily users" },
-                    { id: "b2", text: "Managed team of 4 junior developers and conducted code reviews" },
-                    { id: "b3", text: "Improved application performance by 40% through optimization" },
-                ],
-            },
-            {
-                id: "exp-2",
-                title: "Software Engineer",
-                company: "Startup Labs",
-                location: "Austin, TX",
-                startDate: "Jun 2018",
-                endDate: "Dec 2020",
-                bullets: [
-                    { id: "b4", text: "Developed RESTful APIs using Node.js and Express" },
-                    { id: "b5", text: "Implemented CI/CD pipelines reducing deployment time by 60%" },
-                ],
-            },
-        ],
-        education: [
-            {
-                id: "edu-1",
-                degree: "Bachelor of Science in Computer Science",
-                school: "University of California",
-                location: "Berkeley, CA",
-                startDate: "Sep 2014",
-                endDate: "May 2018",
-                description: "GPA: 3.8/4.0, Dean's List",
-            },
-        ],
-        skills: ["JavaScript", "TypeScript", "React", "Node.js", "Python", "AWS", "Docker", "PostgreSQL"],
-    }
-}
 
 // Live Preview Component
 const ResumePreview = ({ resumeData, isEditing, onEdit }) => {
@@ -363,6 +307,7 @@ const ResumePreview = ({ resumeData, isEditing, onEdit }) => {
 }
 
 const ResumeEditor = ({ onBack, initialFile = null, initialExtractedText = "" }) => {
+    const posthog = usePostHog();
     // Upload state
     const [uploadedFile, setUploadedFile] = useState(initialFile)
     const [isParsing, setIsParsing] = useState(false)
@@ -398,6 +343,17 @@ const ResumeEditor = ({ onBack, initialFile = null, initialExtractedText = "" })
     const [typingIndex, setTypingIndex] = useState(0);
 
     useEffect(() => {
+        if (resumeData) {
+            posthog?.capture('resume_editor_opened', {
+                has_file: !!uploadedFile,
+                source_job_id: location.state?.source_job_id || null,
+                source_job_title: location.state?.source_job_title || null
+            });
+        }
+    }, [resumeData, posthog]);
+
+
+    useEffect(() => {
         if (!isParsing) return;
 
         let i = 0;
@@ -424,6 +380,7 @@ const ResumeEditor = ({ onBack, initialFile = null, initialExtractedText = "" })
             track("PreviewEditingSaved")
         } else {
             track("PreviewEditingStarted")
+
         }
         setIsPreviewEditing(!isPreviewEditing)
     }
@@ -481,7 +438,11 @@ const ResumeEditor = ({ onBack, initialFile = null, initialExtractedText = "" })
             fileType: file.type,
             fileSize: file.size
         });
-
+        posthog?.capture('resume_uploaded', {
+            file_type: file.type,
+            file_size_kb: Math.round(file.size / 1024),
+            method: 'file-input'
+        });
         setUploadedFile(file)
         setIsParsing(true);
         dispatch(fileUpload({ file }))
@@ -550,7 +511,11 @@ const ResumeEditor = ({ onBack, initialFile = null, initialExtractedText = "" })
             fileType: file.type,
             fileSize: file.size
         });
-
+        posthog?.capture('resume_uploaded', {
+            file_type: file.type,
+            file_size_kb: Math.round(file.size / 1024),
+            method: 'drag-drop'
+        });
         setUploadedFile(file)
         setIsParsing(true);
         dispatch(fileUpload({ file }))
@@ -588,7 +553,11 @@ const ResumeEditor = ({ onBack, initialFile = null, initialExtractedText = "" })
             expId,
             bulletLength: bulletText.length
         });
-
+        posthog?.capture('ai_resume_enhance_bullet', {
+            exp_id: expId,
+            bullet_id: bulletId,
+            bullet_length: bulletText.length
+        });
         try {
             const suggestions = await generateAIBullets(bulletText, exp.title)
             setEnhanceAiSuggestions(
@@ -604,10 +573,14 @@ const ResumeEditor = ({ onBack, initialFile = null, initialExtractedText = "" })
             track("AIBulletImproveCompleted", {
                 count: suggestions.length
             });
-
+            posthog?.capture('ai_resume_enhance_completed', {
+                suggestion_count: suggestions.length
+            });
         } catch (error) {
             toast.error("Failed to generate suggestions")
             track("AIBulletImproveFailed");
+            posthog?.capture('ai_resume_enhance_failed');
+
         } finally {
             setIsGeneratingEnhance(false)
         }
@@ -622,7 +595,9 @@ const ResumeEditor = ({ onBack, initialFile = null, initialExtractedText = "" })
         track("AIRegenerateSuggestions", {
             bulletId: activeEnhanceBulletId
         });
-
+        posthog?.capture('ai_resume_regenerate_suggestions', {
+            bullet_id: activeEnhanceBulletId
+        });
         setIsGeneratingEnhance(true)
         try {
             const suggestions = await generateAIBullets(bullet.text, exp.title)
@@ -649,7 +624,10 @@ const ResumeEditor = ({ onBack, initialFile = null, initialExtractedText = "" })
             expId,
             bulletId
         });
-
+        posthog?.capture('ai_bullet_suggestion_used', {
+            exp_id: expId,
+            bullet_id: bulletId
+        });
         setResumeData({
             ...resumeData,
             experience: resumeData.experience.map((exp) =>
@@ -675,7 +653,10 @@ const ResumeEditor = ({ onBack, initialFile = null, initialExtractedText = "" })
         setIsGeneratingAdd(true)
         setAddAiSuggestions([])
         track("AIAddBulletStarted", { expId });
-
+        posthog?.capture('ai_resume_add_bullet', {
+            exp_id: expId,
+            job_title: exp.title
+        });
         try {
             const suggestions = await generateNewBullet(exp.title, exp.company)
             const filteredSuggestions = suggestions.map((text, i) => ({
@@ -689,10 +670,13 @@ const ResumeEditor = ({ onBack, initialFile = null, initialExtractedText = "" })
             track("AIAddBulletCompleted", {
                 count: suggestions.length
             });
-
+            posthog?.capture('ai_resume_add_completed', {
+                suggestion_count: suggestions.length
+            });
         } catch (error) {
             toast.error("Failed to generate bullet suggestions")
             track("AIAddBulletFailed");
+            posthog?.capture('ai_resume_add_failed');
         } finally {
             setIsGeneratingAdd(false)
         }
@@ -709,7 +693,12 @@ const ResumeEditor = ({ onBack, initialFile = null, initialExtractedText = "" })
             expId,
             length: text.length
         });
-
+        posthog?.capture('resume_edited_manually', {
+            field_type: 'bullet',
+            section_type: 'experience',
+            action: 'add',
+            exp_id: expId
+        });
         setResumeData({
             ...resumeData,
             experience: resumeData.experience.map((exp) =>
@@ -746,6 +735,14 @@ const ResumeEditor = ({ onBack, initialFile = null, initialExtractedText = "" })
             bulletId,
             newLength: text.length
         });
+        posthog?.capture('resume_edited_manually', {
+            field_type: 'bullet',
+            section_type: 'experience',
+            action: 'edit',
+            exp_id: expId,
+            bullet_id: bulletId,
+            new_length: text.length
+        });
         setResumeData({
             ...resumeData,
             experience: resumeData.experience.map((exp) =>
@@ -762,6 +759,13 @@ const ResumeEditor = ({ onBack, initialFile = null, initialExtractedText = "" })
     const handleDeleteBullet = (expId, bulletId) => {
         if (!resumeData) return
         track("ManualBulletDeleted", { expId, bulletId });
+        posthog?.capture('resume_edited_manually', {
+            field_type: 'bullet',
+            section_type: 'experience',
+            action: 'delete',
+            exp_id: expId,
+            bullet_id: bulletId
+        });
         setResumeData({
             ...resumeData,
             experience: resumeData.experience.map((exp) =>

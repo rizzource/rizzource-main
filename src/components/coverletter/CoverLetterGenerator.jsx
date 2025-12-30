@@ -7,6 +7,7 @@ import { track } from "@/lib/analytics"
 import { Textarea } from "@/components/ui/textarea"
 import Footer from "@/components/Footer";
 import FeedbackModal from "@/components/FeedbackModal" // Import the new component
+import { usePostHog } from 'posthog-js/react'
 import {
     ArrowLeft,
     Upload,
@@ -87,12 +88,13 @@ const flattenResumeToText = (resume) => {
 
 const CoverLetterGenerator = ({ onBack, initialResumeText = "", initialJobTitle = "", initialCompany = "" }) => {
     // Resume state
+    const posthog = usePostHog();
     const location = useLocation();
     const { jobId, title, jobCompany, description } = location.state || {};
     const [resumeText, setResumeText] = useState(initialResumeText)
     const [resumeFile, setResumeFile] = useState(null)
     const [parsing, setParsing] = useState(false)
-
+    const [hasEverEdited, setHasEverEdited] = useState(false);
     const [originalFileUrl, setOriginalFileUrl] = useState("");
 
     // Mobile screen toggle
@@ -133,6 +135,9 @@ const CoverLetterGenerator = ({ onBack, initialResumeText = "", initialJobTitle 
     const dispatch = useDispatch();
     const navigate = useNavigate();
 
+    const startTimeRef = useRef(null);
+    startTimeRef.current = Date.now();
+
     const [typingIndex, setTypingIndex] = useState(0);
     useEffect(() => {
         if (!parsing) return;
@@ -151,7 +156,12 @@ const CoverLetterGenerator = ({ onBack, initialResumeText = "", initialJobTitle 
         return () => clearInterval(interval);
     }, [parsing]);
 
-
+    useEffect(() => {
+        posthog?.capture('cover_letter_page_viewed', {
+            from_job: !!jobId,
+            job_id: jobId || null
+        });
+    }, [posthog]);
     const toggleSection = (section) => {
         setSectionsOpen((prev) => ({ ...prev, [section]: !prev[section] }))
     }
@@ -179,7 +189,11 @@ const CoverLetterGenerator = ({ onBack, initialResumeText = "", initialJobTitle 
             fileSize: file.size,
             method: "file-input"
         });
-
+        posthog?.capture('cover_letter_resume_uploaded', {
+            file_type: file.type,
+            file_size_kb: Math.round(file.size / 1024),
+            method: 'file-input'
+        });
         setResumeFile(file)
         setParsing(true)
 
@@ -227,7 +241,11 @@ const CoverLetterGenerator = ({ onBack, initialResumeText = "", initialJobTitle 
             fileSize: file.size,
             method: "drag-drop"
         });
-
+        posthog?.capture('cover_letter_resume_uploaded', {
+            file_type: file.type,
+            file_size_kb: Math.round(file.size / 1024),
+            method: 'drag-drop'
+        });
         setResumeFile(file)
         setParsing(true)
 
@@ -272,6 +290,14 @@ const CoverLetterGenerator = ({ onBack, initialResumeText = "", initialJobTitle 
             tone: selectedTone,
         });
 
+        posthog?.capture('cover_letter_generation_started', {
+            has_resume: !!resumeText,
+            has_job_title: !!jobTitle,
+            has_company: !!company,
+            has_description: !!jobDescription,
+            tone: selectedTone
+        });
+
         const result = await dispatch(
             generateCoverLetterThunk({
                 resumeText,
@@ -291,6 +317,11 @@ const CoverLetterGenerator = ({ onBack, initialResumeText = "", initialJobTitle 
             track("CL_Generated", {
                 length: result.payload.coverLetter?.length || 0,
                 tone: selectedTone
+            });
+            posthog?.capture('cover_letter_generation_completed', {
+                letter_length: result.payload.coverLetter.length,
+                tone: selectedTone,
+                time_to_generate_ms: startTimeRef.current ? Date.now() - startTimeRef.current : null
             });
             setMobileView("preview")
         } else {
@@ -326,6 +357,10 @@ const CoverLetterGenerator = ({ onBack, initialResumeText = "", initialJobTitle 
                 length: result.payload.coverLetter?.length || 0,
                 tone: selectedTone
             });
+            posthog?.capture('cover_letter_regenerated', {
+                tone: selectedTone,
+                previous_length: coverLetter.length
+            });
             setMobileView("preview");
         } else {
             track("CL_RegenerateFailed");
@@ -357,12 +392,21 @@ const CoverLetterGenerator = ({ onBack, initialResumeText = "", initialJobTitle 
                     setShowFeedbackModal(true)
                 }, 1000)
             })
+        posthog?.capture('cover_letter_downloaded', {
+            final_length: coverLetter.length,
+            was_edited: hasEverEdited,
+            tone: selectedTone
+        });
     }
 
 
     const handleEditToggle = () => {
         track("CL_EditToggle", {
             editing: !isEditing
+        });
+        setHasEverEdited(true);
+        posthog?.capture('cover_letter_edited', {
+            original_length: coverLetter.length
         });
         if (isEditing) {
             toast.success("Changes saved!")

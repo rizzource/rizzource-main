@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useDispatch, useSelector } from "react-redux";
 import { loginUser, registerUser, googleLogin } from "@/redux/slices/userApiSlice";
 import { useNavigate } from "react-router-dom";
+import { usePostHog } from 'posthog-js/react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -25,18 +26,31 @@ const Auth = () => {
 
   const dispatch = useDispatch();
   const navigate = useNavigate();
+  const posthog = usePostHog();
 
   const { user, loading, error } = useSelector((state) => state.userApi);
 
-  // Redirect after login
-  // Redirect after login — return to previous page if provided
+  // Track pageview on component mount (PostHog only)
+  useEffect(() => {
+    posthog?.capture('$pageview');
+  }, [posthog]);
+
+  // Redirect after login and identify user
   useEffect(() => {
     if (user) {
+      // Identify user in PostHog
+      posthog?.identify(
+        user.id || user.userId || user.email,
+        {
+          email: user.email,
+          name: user.name || `${user.firstName} ${user.lastName}`,
+        }
+      );
+
       const returnTo = window.history.state?.usr?.returnTo;
       navigate(returnTo || "/");
     }
-  }, [user, navigate]);
-
+  }, [user, navigate, posthog]);
 
   // ----------------------
   // EMAIL/PASSWORD LOGIN
@@ -54,6 +68,17 @@ const Auth = () => {
 
     if (result.error) {
       setLocalError("Invalid email or password");
+
+      // Track failed login (PostHog)
+      posthog?.capture('login_failed', {
+        method: 'email',
+        error_type: 'invalid_credentials'
+      });
+    } else {
+      // Track successful login (PostHog)
+      posthog?.capture('login_succeeded', {
+        method: 'email'
+      });
     }
   };
 
@@ -82,14 +107,8 @@ const Auth = () => {
     document.body.appendChild(script);
   }, []);
 
-
-
   // ------------------------------
-  // GOOGLE LOGIN HANDLER (FIXED)
-  // Uses OAuth2 Token Client — NO FedCM
-  // ------------------------------
-  // ------------------------------
-  // GOOGLE LOGIN HANDLER (OAuth Popup Code Flow)
+  // GOOGLE LOGIN HANDLER
   // ------------------------------
   const handleGoogleAuth = () => {
     setLocalError("");
@@ -100,12 +119,15 @@ const Auth = () => {
       return;
     }
 
+    // Track Google auth attempt (PostHog)
+    posthog?.capture('google_auth_initiated');
+
     try {
       const client = window.google.accounts.oauth2.initCodeClient({
         client_id: GOOGLE_CLIENT_ID,
         scope: "openid email profile",
-        ux_mode: "popup",            // ⭐ REAL POPUP WINDOW
-        redirect_uri: "postmessage",  // ⭐ Required for JS-based code flow
+        ux_mode: "popup",
+        redirect_uri: "postmessage",
         callback: async (response) => {
           try {
             const code = response.code;
@@ -115,25 +137,41 @@ const Auth = () => {
             if (result.error) {
               console.error("Google login failed:", result.error);
               setLocalError("Google login failed.");
+
+              // Track Google login failure (PostHog)
+              posthog?.capture('login_failed', {
+                method: 'google',
+                error_type: 'google_auth_error'
+              });
+            } else {
+              // Track successful Google login (PostHog)
+              posthog?.capture('login_succeeded', {
+                method: 'google'
+              });
             }
           } catch (err) {
             console.error("Google callback error:", err);
             setLocalError("Google login failed.");
+
+            posthog?.capture('login_failed', {
+              method: 'google',
+              error_type: 'callback_error'
+            });
           }
         },
       });
 
-      client.requestCode(); // ⭐ Opens real popup window
+      client.requestCode();
     } catch (err) {
       console.error("Google OAuth init error:", err);
       setLocalError("Google sign-in failed.");
+
+      posthog?.capture('login_failed', {
+        method: 'google',
+        error_type: 'init_error'
+      });
     }
   };
-
-
-
-
-
 
   // ----------------------
   // REGISTER HANDLER
@@ -148,13 +186,28 @@ const Auth = () => {
     const Password = form.get("password");
     const Confirm = form.get("confirmPassword");
 
+    // Track signup attempt (PostHog)
+    posthog?.capture('signup_started', {
+      method: 'email'
+    });
+
     if (Password !== Confirm) {
       setLocalError("Passwords do not match");
+
+      posthog?.capture('signup_failed', {
+        method: 'email',
+        error_type: 'password_mismatch'
+      });
       return;
     }
 
     if (Password.length < 6) {
       setLocalError("Password must be at least 6 characters long");
+
+      posthog?.capture('signup_failed', {
+        method: 'email',
+        error_type: 'password_too_short'
+      });
       return;
     }
 
@@ -170,13 +223,23 @@ const Auth = () => {
 
     if (result.error) {
       setLocalError("This email is already registered.");
+
+      posthog?.capture('signup_failed', {
+        method: 'email',
+        error_type: 'email_already_exists'
+      });
       return;
     }
+
+    // Track successful signup (PostHog)
+    posthog?.capture('signup_completed', {
+      method: 'email'
+    });
 
     setSuccess("Account created successfully! You can now sign in.");
   };
 
-  // Small inline Google icon – no extra deps
+  // Small inline Google icon
   const GoogleIcon = () => (
     <span className="flex items-center justify-center h-5 w-5 rounded-full bg-white border mr-2">
       <span className="text-[#4285F4] font-bold text-sm">G</span>
