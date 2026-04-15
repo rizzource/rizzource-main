@@ -1,8 +1,20 @@
 {
-  "redirects": [
-    { "source": "/", "destination": "/jobs", "permanent": true }
-  ],
   "rewrites": [
-    { "source": "/(.*)", "destination": "/" }
+    {
+      "source": "/gardenpath/:path*",
+      "destination": "https://garden-path-design.vercel.app/:path*"
+    },
+    {
+      "source": "/gardenology/:path*",
+      "destination": "https://gardenology-studio.vercel.app/:path*"
+    },
+    {
+      "source": "/yawnslawncare/:path*",
+      "destination": "https://yawns-lawn-care-site.vercel.app/:path*"
+    },
+    {
+      "source": "/grasshopper/:path*",
+      "destination": "https://grasshopper-legacy-site-25.vercel.app/:path*"
+    }
   ]
 }
