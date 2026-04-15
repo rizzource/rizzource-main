@@ -1,16 +1,32 @@
 {
   "rewrites": [
     {
+      "source": "/gardenpath",
+      "destination": "https://garden-path-design.vercel.app/"
+    },
+    {
       "source": "/gardenpath/:path*",
       "destination": "https://garden-path-design.vercel.app/:path*"
+    },
+    {
+      "source": "/gardenology",
+      "destination": "https://gardenology-studio.vercel.app/"
     },
     {
       "source": "/gardenology/:path*",
       "destination": "https://gardenology-studio.vercel.app/:path*"
     },
     {
+      "source": "/yawnslawncare",
+      "destination": "https://yawns-lawn-care-site.vercel.app/"
+    },
+    {
       "source": "/yawnslawncare/:path*",
       "destination": "https://yawns-lawn-care-site.vercel.app/:path*"
+    },
+    {
+      "source": "/grasshopper",
+      "destination": "https://grasshopper-legacy-site-25.vercel.app/"
     },
     {
       "source": "/grasshopper/:path*",
